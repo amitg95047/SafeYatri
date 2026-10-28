@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signed() { return request.auth != null; }
+  function verified() { return signed() && request.auth.token.email_verified == true; }
+  function admin() { return verified() && request.auth.token.email == 'amitag3007@gmail.com'; }
+  function reportPath(id) { return /databases/$(database)/documents/reports/$(id); }
+  function userPath(uid) { return /databases/$(database)/documents/users/$(uid); }
+  function rewardPath(uid,id) { return /databases/$(database)/documents/users/$(uid)/rewards/$(id); }
+  function isNewAward(uid,id) {
+   let before = get(reportPath(id)).data;
+   let after = getAfter(reportPath(id)).data;
+   return admin() && before.reporterId == uid && uid != request.auth.uid
+    && before.rewardAwarded == false && after.rewardAwarded == true && after.review == 'verified';
+  }
+  function validAward(uid,id) {
+   let oldPoints = exists(userPath(uid)) ? get(userPath(uid)).data.points : 0;
+   let profile = getAfter(userPath(uid)).data;
+   let reward = getAfter(rewardPath(uid,id)).data;
+   return isNewAward(uid,id) && !exists(rewardPath(uid,id))
+    && profile.points == oldPoints + 50 && profile.lastRewardReportId == id
+    && reward.points == 50 && reward.reportId == id && reward.at == request.time;
+  }
+  function validSubmission(r,id) {
+   return r.keys().hasOnly(['id','corridor','title','type','status','review','location','description','observedAt','lat','lng','photo','reporter','reporterId','rewardAwarded','decisionHistory'])
+    && r.id == id && r.reporterId == request.auth.uid && r.reporter == request.auth.token.email
+    && r.corridor is string && r.corridor.size() >= 3 && r.corridor.size() <= 150
+    && r.type in ['Blocked road','Landslide','Road damage','Heavy rain','Flooding','Fallen tree','Other']
+    && r.title == r.type + ' report' && r.status == 'orange' && r.review == 'pending' && r.rewardAwarded == false
+    && r.description is string && r.description.size() >= 12 && r.description.size() <= 1000
+    && r.location is string && r.location.size() >= 3 && r.location.size() <= 200
+    && r.lat is number && r.lat >= -90 && r.lat <= 90 && r.lng is number && r.lng >= -180 && r.lng <= 180
+    && r.observedAt is timestamp && r.observedAt <= request.time + duration.value(1,'m') && r.observedAt >= request.time - duration.value(24,'h')
+    && r.photo is string && r.photo.size() >= 100 && r.photo.size() <= 140000 && r.photo.matches('data:image/jpeg;base64,[A-Za-z0-9+/=]+')
+    && r.decisionHistory is list && r.decisionHistory.size() == 1
+    && r.decisionHistory[0].action == 'submitted' && r.decisionHistory[0].by == request.auth.token.email;
+  }
+  match /reports/{id} {
+   allow read: if signed();
+   allow create: if verified() && validSubmission(request.resource.data,id)
+    && getAfter(/databases/$(database)/documents/reportLimits/$(request.auth.uid)).data.lastAt == request.time
+    && getAfter(/databases/$(database)/documents/reportLimits/$(request.auth.uid)).data.lastReportId == id;
+   allow update: if admin() && resource.data.reporterId != request.auth.uid
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['review','status','rewardAwarded','decisionHistory'])
+    && request.resource.data.review in ['pending','verified','rejected','clarification']
+    && request.resource.data.status == (request.resource.data.review == 'verified' ? (resource.data.type in ['Blocked road','Landslide'] ? 'red' : 'yellow') : (request.resource.data.review == 'rejected' ? 'white' : 'orange'))
+    && request.resource.data.decisionHistory is list && request.resource.data.decisionHistory.size() <= 100
+    && request.resource.data.decisionHistory[0].action == request.resource.data.review && request.resource.data.decisionHistory[0].by == request.auth.token.email
+    && (resource.data.rewardAwarded == true ? request.resource.data.rewardAwarded == true : (request.resource.data.review == 'verified' ? (request.resource.data.rewardAwarded == true && validAward(resource.data.reporterId,id)) : request.resource.data.rewardAwarded == false));
+  }
+  match /reportLimits/{uid} {
+   allow read: if signed() && request.auth.uid == uid;
+   allow create, update: if verified() && request.auth.uid == uid
+    && request.resource.data.keys().hasOnly(['lastAt','lastReportId']) && request.resource.data.lastAt == request.time
+    && (!exists(/databases/$(database)/documents/reportLimits/$(uid)) || resource.data.lastAt <= request.time - duration.value(1,'m'))
+    && !exists(reportPath(request.resource.data.lastReportId))
+    && getAfter(reportPath(request.resource.data.lastReportId)).data.reporterId == uid;
+  }
+  match /users/{uid} {
+   allow read: if signed() && (request.auth.uid == uid || admin());
+   allow create, update: if admin() && request.resource.data.keys().hasOnly(['points','lastRewardReportId'])
+    && request.resource.data.points is int && validAward(uid,request.resource.data.lastRewardReportId);
+   match /rewards/{id} {
+    allow read: if signed() && request.auth.uid == uid;
+    allow create: if admin() && request.resource.data.keys().hasOnly(['points','reportId','at','reason']) && validAward(uid,id);
+   }
+   match /journeys/{id} {
+    // One pinned journey is included in the free plan; no payment infrastructure required.
+    allow read, delete: if signed() && request.auth.uid == uid;
+    allow create, update: if signed() && request.auth.uid == uid && id == 'favourite'
+     && request.resource.data.keys().hasOnly(['from','to'])
+     && request.resource.data.from is string && request.resource.data.to is string
+     && request.resource.data.from.size() <= 100 && request.resource.data.to.size() <= 100;
+   }
+  }
+ }
+}
