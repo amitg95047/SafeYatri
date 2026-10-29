@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*-debug.log
+
+# Local secrets and generated files
+.env.local
+.env
+node_modules/
+dist/
+.firebase/
+firestore-debug.log
+SafeYatra/
