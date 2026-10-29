@@ -1,26 +1,51 @@
-# safeYatri — free Firebase edition
+# Safe Yatra — Frontend demo
 
-A React + TypeScript app for community road observations in Northeast India. Includes **81 destinations**, **18 corridors**, real email/password and Google authentication, camera-only incident evidence, administrator review, one-time contribution rewards, and a favourite journey saved across devices.
+A responsive React + TypeScript + Vite frontend for hill-road incident reporting in Northeast India.
 
-## Run locally
+## Run on macOS
 
-```sh
-npm install
-npm run dev
-```
+1. Install Node.js 20+ if needed: https://nodejs.org/
+2. Open Terminal and move into the project folder. If you extracted it into Documents:
+   ```bash
+   cd ~/Documents/safeYatra
+   ```
+3. Install dependencies and start the app:
+   ```bash
+   npm install
+   npm run dev
+   ```
+4. Open the local URL Vite prints (usually `http://localhost:5173`).
+5. For a production build, run `npm run build`.
 
-The existing Firebase project `safeyatra-767eb` is configured in `.env.local`. Its project-owner account is `anshu.cse.24@nitap.ac.in`. To use another project, copy `.env.example` to `.env.local` and enter that project's public web-app settings. Never put private keys or account passwords in frontend files.
+## Demo access
 
-`npm run build` checks TypeScript and produces `dist/`. `npm test` runs the Firestore access and transaction tests in an isolated local emulator; it requires Java 21+ and downloads Google's emulator on its first run. Tests use `demo-safeyatra` and do not write production data.
+- Login/signup is simulated locally; use any email and a password with at least 6 characters.
+- Reviewer demo identity: `amitag3007@gmail.com`. Any 6+ character password works in this demo.
+- Demo role switching is not exposed as a general toggle. The configured email gets the reviewer demo view.
+- Seed incidents and the weather note are **fictional examples**, not live road or weather information.
+- Reports, decisions and drafts persist in this browser's `localStorage`. Clearing site data clears demo data. Photo data URLs can consume browser storage.
+- Map tiles come from OpenStreetMap. The app does not bulk-download tiles.
 
-## Free Spark architecture
+## Frontend features
 
-The app uses Firebase Authentication, Firestore and static Firebase Hosting. It does **not** require Cloud Functions, Firebase Storage, a payment account, or a billing upgrade. The project remains on Spark; normal free-plan quotas apply. When quotas are exhausted, operations can fail until they reset.
+- Explore a sample NH-10 Siliguri–Gangtok corridor with map/list views, status filters, markers, observation time and verification status.
+- Five status colours: red, orange, yellow, green and white. Green means no issue is currently recorded, not guaranteed safety. White means insufficient data.
+- Start/destination inputs (route calculation is intentionally a demo placeholder).
+- Incident submission with GPS or map-picked location, observation time, description, optional image, validation and locally saved drafts.
+- My Reports with review state and decision history.
+- Reviewer queue with confirm, reject, request clarification and reopen actions.
+- Weather advisory kept separate with a source and expiry field.
 
-Camera photos are resized and compressed to JPEG data URLs of at most 140,000 characters (roughly 105 KB of image data), stored in the incident document. This keeps a small community deployment compatible with Spark. Larger-scale media storage and background processing would require a different architecture.
+## Production integrations still required
 
-Google sign-in falls back to a full-page redirect when popups are blocked. Prefer `https://safeyatra-767eb.firebaseapp.com` for redirect sign-in, which shares the default Firebase auth domain.
+- **Firebase Auth:** replace `src/services/auth.ts` demo auth with Firebase Authentication, including real email/password and Google provider flows.
+- **Firestore:** replace `src/services/storage.ts` and `src/services/reports.ts` localStorage persistence with Firestore reads/writes, server timestamps and error/offline handling.
+- **Cloudinary:** replace `src/services/media.ts` data-URL storage with a signed upload flow or restricted unsigned preset. Do not expose API secrets in frontend environment variables.
+- **Reviewer security:** enforce reviewer claims and report decisions with Firestore Security Rules and/or a trusted backend. Hiding a button or checking an email in React is not authorization.
+- **Official road/weather data:** replace the clearly labelled fictional seed/advisory with trusted source integrations, observation freshness and expiry. Do not infer safety from an empty report list.
+- Add production-grade account recovery, validation/rate limits, image moderation, privacy policy, accessibility testing and deployment configuration before public release.
 
+<<<<<<< HEAD
 Authentication providers enabled for this project: Email/Password and Google. `localhost` and the project's hosting domains are authorised. Other deployment domains must be added in Firebase Console → Authentication → Settings.
 
 ## Administrator
@@ -110,3 +135,6 @@ The route brief can be copied or downloaded as text for your travel group. The d
 ### Mountain artwork
 
 `public/images/mountain-mist.jpg` was created with the built-in image generation tool and compressed for the app. Final built-in image prompt: “Use case: photorealistic-natural. Asset type: wide background photograph for SafeYatri, a Northeast India mountain road awareness web app. Primary request: light, airy Himalayan foothills with multiple layers of misty blue-green mountains, an understated winding mountain road in the distance, soft sunrise daylight. Wide landscape, high horizon, generous pale sky and mist, calm realistic travel photography, pastel mint, pale cyan, sage, warm ivory palette. Avoid people, vehicles, buildings, text, logos, watermarks, saturated colors, dark shadows. Intended as a subtle light background behind interface cards, never incident evidence.” This decorative image is never used as incident evidence.
+=======
+Copy `.env.example` to `.env` only when configuring public Firebase client settings and Cloudinary upload settings. Never add private keys or admin credentials to `VITE_` variables.
+>>>>>>> 3361aa4154425a8c6e1712ef2bf88f55419d7048
