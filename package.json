@@ -9,7 +9,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "npm run test:help && npm run test:rules",
     "test:rules": "firebase emulators:exec --project demo-safeyatra --config firebase.emulators.json --only firestore 'node tests/firestore.rules.mjs'",
-    "test:help": "node --test tests/help.test.mjs"
+    "test:help": "node --test tests/help.test.mjs tests/journey.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

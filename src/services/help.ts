@@ -8,7 +8,8 @@ export type AppScreen =
   | "mine"
   | "review"
   | "membership"
-  | "account";
+  | "account"
+  | "zones";
 export interface HelpReply {
   text: string;
   action?: AppScreen;
@@ -21,6 +22,22 @@ export function answerHelp(
   reports: Incident[],
 ): HelpReply {
   const q = input.toLowerCase();
+  if (/zone/.test(q))
+    return user.role === "reviewer"
+      ? {
+          text: "Use Zone control to click a centre on the map, choose a radius and status, and publish directly. No photo or report approval is needed. Keep demonstration zones marked as demo examples.",
+          action: "zones",
+          label: "Open zone control",
+        }
+      : {
+          text: "Plan a journey to view administrator advisories and clearly labelled demo zones. Zone colours are guidance, not a guarantee of safety.",
+          action: "explore",
+          label: "See journey zones",
+        };
+  if (/emergency|112|sos/.test(q))
+    return {
+      text: "For an emergency in India, use the 112 call button in the header. It opens your phone dialler. This chat does not contact emergency services.",
+    };
   if (/email|mail|account|profile|login/.test(q))
     return {
       text: `You are signed in as ${user.name} (${user.email}). Email: ${user.verified ? "verified" : "awaiting verification"}. Access: ${user.role === "reviewer" ? "administrator" : "traveller"}.`,
@@ -38,7 +55,7 @@ export function answerHelp(
   if (/admin|approve|review|reject/.test(q))
     return user.role === "reviewer"
       ? {
-          text: `There are ${reports.filter((r) => r.review === "pending" || r.review === "clarification").length} reports awaiting action. Inspect the photo, location and observation time before approving. Your own reports cannot be self-approved.`,
+          text: `There are ${reports.filter((r) => r.review === "pending" || r.review === "clarification").length} reports awaiting action. Inspect the photo, location and observation time before approving. You can review your own reports, but they do not earn reward points.`,
           action: "review",
           label: "Open admin dashboard",
         }

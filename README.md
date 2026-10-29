@@ -31,7 +31,7 @@ Email/password users can use **Resend verification email**, then **I’ve verifi
 
 Firestore rules independently check Firebase's signed authentication token for **both the exact administrator email and `email_verified == true`**. Editing local storage, changing a React role, or typing the email into an unverified account cannot grant review access. No custom-claim provisioning or service-account key is needed for this single-admin free edition.
 
-Administrators cannot review their own reports. To change the designated admin, update the exact email in both `src/services/auth.ts` and `firestore.rules`, then redeploy the rules and frontend.
+Administrators can review their own reports, but those reviews do not award points. To change the designated admin, update the exact email in both `src/services/auth.ts` and `firestore.rules`, then redeploy the rules and frontend.
 
 ## Reports and rewards
 
@@ -78,8 +78,20 @@ Frontend and Firestore rules can be checked without making a real incident repor
 
 ## safeYatri refresh
 
-The app is branded **safeYatri**. Its existing Firebase project ID and public hosting addresses stay the same so accounts, incidents, points and saved drafts continue working. Travellers land on their personal dashboard; the verified administrator lands on a dedicated review workspace. The header and My account page show the registered email, verification status and access level. Review notes are stored separately per report; actions are disabled while saving and for self-review.
+The app is branded **safeYatri**. Its existing Firebase project ID and public hosting addresses stay the same so accounts, incidents, points and saved drafts continue working. Travellers land on their personal dashboard; the verified administrator lands on a dedicated review workspace. The header and My account page show the registered email, verification status and access level. Review notes are stored separately per report; actions are disabled while saving. Self-review is allowed without awarding points.
 
 **Yatri Help** is a free, local guided chatbot. It answers account, report-status, verification, admin-review, destination and reward questions from app data and prepared guidance. It is not an LLM, official advisory service or live navigation/safety feed. Messages stay in memory in the current page. The bot can navigate to relevant screens and offer share/copy/WhatsApp actions; it never submits or approves incidents. WhatsApp Support opens **+91 9341176771**; visitors choose what to send. Native sharing falls back to copying the canonical site URL.
 
 `npm run test:help` checks the chatbot's account scoping, admin boundaries, safety limits and support actions.
+
+## Journey zones and emergency access
+
+The header has an explicit **112** dial link (`tel:112`), opening the visitor’s dialler. The app never calls automatically. Source: [India Emergency Response Support System](https://112.gov.in/).
+
+Administrators have **Zone control**: pick a centre on the map, choose a radius (0.5–20 km), status, note and expiry (up to 7 days), then publish directly. No report, camera evidence or further approval is required. Zones are separate from traveller incident reports. Firebase rules enforce the existing administrator identity, bounded geometry, expiry and authenticated update attribution. Switch Active off to archive; expired and archived zones disappear from journey maps.
+
+Ten clearly labelled demonstration zones are included in Northeast locations. Dashed circles are demo examples, not live closures or safety guidance. They can be hidden. Admins can edit these examples or create their own zones; new zones default to demo until the administrator explicitly changes that setting. Archive overrides for demo IDs prevent hidden examples from reappearing.
+
+**Check journey** commits the selected start/destination, fits the map to the road route, draws endpoints A/B and shows intersecting zone advisories. Driving geometry, approximate distance and duration come from the public [OSRM route service](https://project-osrm.org/docs/v5.24.0/api/). Requests include only the selected public town-centre coordinates. This shared public service has no availability guarantee and does not include live traffic or automatically avoid marked zones. On failure, the app shows endpoints and an explicit error, without inventing a driving line. Route-zone matching uses circle radius plus a 500 m buffer around the route. Copy journey brief includes demo labels and advisory limits.
+
+The minimal theme uses neutral surfaces with a muted teal accent; road/zone colours retain their semantic meaning. `npm run test:help` now also checks route geometry conversion, zone intersection, expiry, demo visibility and archived demo overrides.

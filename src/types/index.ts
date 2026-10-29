@@ -35,3 +35,19 @@ export interface WeatherAdvisory {
   expiresAt: string;
   detail: string;
 }
+
+export type ZoneStatus = "closed" | "caution" | "clear" | "unknown";
+export interface RoadZone {
+  id: string;
+  name: string;
+  status: ZoneStatus;
+  lat: number;
+  lng: number;
+  radiusMeters: number;
+  note: string;
+  active: boolean;
+  isDemo: boolean;
+  expiresAt: string;
+  updatedAt: string;
+  updatedBy: string;
+}

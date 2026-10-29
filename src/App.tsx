@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Bell,
+  PhoneCall,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -42,7 +43,13 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { Incident, IncidentType, RoadStatus, ReviewStatus } from "./types";
+import type {
+  Incident,
+  IncidentType,
+  RoadStatus,
+  ReviewStatus,
+  RoadZone,
+} from "./types";
 import { clearDraft, loadDraft, saveDraft } from "./services/storage";
 import {
   completeRedirectSignIn,
@@ -56,6 +63,12 @@ import {
 } from "./services/auth";
 import { firebaseReady } from "./services/firebase";
 import { CameraCapture } from "./components/CameraCapture";
+import { JourneyLayers, type JourneyInfo } from "./components/JourneyLayers";
+import { JourneySummary } from "./components/JourneySummary";
+import { ZoneEditor } from "./components/ZoneEditor";
+import { zoneTouchesRoute } from "./services/journey";
+import { mergeZones, ZONE_COLORS, ZONE_LABELS } from "./data/zones";
+import { watchZones } from "./services/zones";
 import { HelpPanel, SupportMenu } from "./components/HelpPanel";
 import { AccountPage, TravellerDashboard } from "./components/AccountDashboard";
 import type { AppScreen } from "./services/help";
@@ -106,22 +119,6 @@ function MapClick({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   });
   return null;
 }
-function MapFocus({ from, to }: { from: string; to: string }) {
-  const map = useMap();
-  useEffect(() => {
-    const a = PLACES.find((p) => p.name === from),
-      b = PLACES.find((p) => p.name === to);
-    if (a && b)
-      map.fitBounds(
-        [
-          [a.lat, a.lng],
-          [b.lat, b.lng],
-        ],
-        { padding: [35, 35], maxZoom: 11 },
-      );
-  }, [from, to, map]);
-  return null;
-}
 function ReportMapFocus({
   lat,
   lng,
@@ -159,6 +156,50 @@ function App() {
   const [from, setFrom] = useState("Siliguri");
   const [to, setTo] = useState("Gangtok");
   const [routeMessage, setRouteMessage] = useState("");
+  const [journey, setJourney] = useState({
+    from: "Siliguri",
+    to: "Gangtok",
+    revision: 0,
+  });
+  const [savedZones, setSavedZones] = useState<RoadZone[]>([]);
+  const [showDemoZones, setShowDemoZones] = useState(true);
+  const [minute, setMinute] = useState(Date.now());
+  const [journeyInfo, setJourneyInfo] = useState<JourneyInfo>({
+    loading: false,
+    error: "",
+    distance: 0,
+    duration: 0,
+    zones: [],
+  });
+  const zones = useMemo(
+    () => mergeZones(savedZones, showDemoZones, minute),
+    [savedZones, showDemoZones, minute],
+  );
+  useEffect(() => {
+    const timer = window.setInterval(() => setMinute(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!user) {
+      setSavedZones([]);
+      return;
+    }
+    return watchZones(setSavedZones, (e) =>
+      setToast(`Could not load admin zones: ${e.message}`),
+    );
+  }, [user?.uid]);
+  useEffect(() => {
+    if (journey.revision > 0 && screen === "explore")
+      document
+        .getElementById("journey-map")
+        ?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+            .matches
+            ? "auto"
+            : "smooth",
+          block: "start",
+        });
+  }, [journey.revision]);
   const [reportType, setReportType] = useState<IncidentType>("Landslide");
   const [reportDesc, setReportDesc] = useState("");
   const [reportLocation, setReportLocation] = useState("");
@@ -251,13 +292,27 @@ function App() {
       incidents.filter(
         (i) =>
           i.corridor === corridor &&
+          (!journeyInfo.points?.length ||
+            zoneTouchesRoute(
+              { ...i, radiusMeters: 2500 },
+              journeyInfo.points,
+              0,
+            )) &&
           (!recentOnly || Date.now() - Date.parse(i.observedAt) < 86400000) &&
           (filter === "all" || i.status === filter) &&
           `${i.title} ${i.location} ${i.description}`
             .toLowerCase()
             .includes(search.toLowerCase()),
       ),
-    [incidents, corridor, filter, search, recentOnly],
+    [
+      incidents,
+      corridor,
+      filter,
+      search,
+      recentOnly,
+      journeyInfo.points,
+      minute,
+    ],
   );
   const active = visible.find((i) => i.id === selected) || visible[0];
   const myReports = incidents.filter(
@@ -271,6 +326,12 @@ function App() {
     count: incidents.filter(
       (i) =>
         i.corridor === corridor &&
+        (!journeyInfo.points?.length ||
+          zoneTouchesRoute(
+            { ...i, radiusMeters: 2500 },
+            journeyInfo.points,
+            0,
+          )) &&
         i.status === status &&
         (!recentOnly || Date.now() - Date.parse(i.observedAt) < 86400000),
     ).length,
@@ -440,6 +501,7 @@ function App() {
   if (!user)
     return (
       <div className="auth-shell">
+        <a className="emergency-call auth-emergency" href="tel:112" aria-label="Call emergency number 112"><PhoneCall size={17}/><span>Emergency · 112</span></a>
         <div className="auth-art">
           <div className="auth-brand">
             <span className="brand-mark">
@@ -643,6 +705,15 @@ function App() {
           </span>
         </div>
         <div className="topbar-right">
+          <a
+            className="emergency-call"
+            href="tel:112"
+            aria-label="Call emergency number 112"
+            title="Emergency assistance · dial 112"
+          >
+            <PhoneCall size={17} />
+            <span>112</span>
+          </a>
           <button
             className="icon-btn notification-btn"
             title="Advisories"
@@ -728,6 +799,16 @@ function App() {
               <div className="sidebar-label sidebar-label-spaced">
                 REVIEW TOOLS
               </div>
+              <button
+                className={`nav-link ${screen === "zones" ? "nav-active" : ""}`}
+                onClick={() => {
+                  setScreen("zones");
+                  setMobileNav(false);
+                }}
+              >
+                <MapIcon size={18} />
+                Zone control
+              </button>
               <button
                 className={`nav-link ${screen === "review" ? "nav-active" : ""}`}
                 onClick={() => {
@@ -819,6 +900,15 @@ function App() {
               }}
             />
           )}
+          {screen === "zones" &&
+            (user.role === "reviewer" ? (
+              <ZoneEditor saved={savedZones} onSaved={setToast} />
+            ) : (
+              <div className="empty-large">
+                <h2>Administrator access required</h2>
+                <p>Only the administrator can change zone advisories.</p>
+              </div>
+            ))}
           {screen === "membership" && (
             <Membership user={user} from={from} to={to} />
           )}
@@ -912,9 +1002,15 @@ function App() {
                     }
                     setFrom(a.name);
                     setTo(b.name);
+                    setJourney((previous) => ({
+                      from: a.name,
+                      to: b.name,
+                      revision: previous.revision + 1,
+                    }));
+                    setView("map");
                     setSelected(null);
                     setRouteMessage(
-                      `${a.name}, ${a.state} → ${b.name}, ${b.state}. Open directions for road navigation. Check local restrictions and official advisories; no route safety score is available.`,
+                      `${a.name}, ${a.state} → ${b.name}, ${b.state}. The map shows the selected road route with admin advisories and labelled demo zones.`,
                     );
                   }}
                 >
@@ -926,9 +1022,9 @@ function App() {
                   <a
                     target="_blank"
                     rel="noopener noreferrer"
-                    href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&travelmode=driving`}
+                    href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(journey.from)}&destination=${encodeURIComponent(journey.to)}&travelmode=driving`}
                   >
-                    Open directions ↗
+                    Open selected journey directions ↗
                   </a>
                   <Navigation size={16} />
                   {routeMessage}
@@ -940,6 +1036,28 @@ function App() {
                   </button>
                 </div>
               )}
+              <div className="zone-visibility">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showDemoZones}
+                    onChange={(e) => setShowDemoZones(e.target.checked)}
+                  />
+                  Show demo zones
+                </label>
+                <span>
+                  {showDemoZones
+                    ? "Dashed zones are fictional examples, not live warnings."
+                    : "Demo examples hidden."}{" "}
+                  Solid zones are administrator advisories.
+                </span>
+              </div>
+              <JourneySummary
+                from={journey.from}
+                to={journey.to}
+                info={journeyInfo}
+                onMessage={setToast}
+              />
               <div className="summary-strip">
                 {counts.map((c) => (
                   <button
@@ -1047,14 +1165,15 @@ function App() {
               <div
                 className={`explore-layout ${view === "list" ? "list-layout" : ""}`}
               >
-                <section className="map-section">
+                <section className="map-section" id="journey-map">
                   <div className="map-top-label">
                     <span>
-                      <span className="live-dot" /> {corridor.split(" · ")[0]}{" "}
-                      <span className="map-muted">· Community reports</span>
+                      <span className="live-dot" /> {journey.from} →{" "}
+                      {journey.to}{" "}
+                      <span className="map-muted">· Journey map</span>
                     </span>
                     <span className="map-layer-label">
-                      <MapPin size={13} /> Incident reports
+                      <MapPin size={13} /> Admin zones & reports
                     </span>
                   </div>
                   <div className="map-frame">
@@ -1068,7 +1187,13 @@ function App() {
                         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                       />
-                      <MapFocus from={from} to={to} />
+                      <JourneyLayers
+                        from={journey.from}
+                        to={journey.to}
+                        requestKey={journey.revision}
+                        zones={zones}
+                        onInfo={setJourneyInfo}
+                      />
                       {visible.map((i) => (
                         <Marker
                           key={i.id}
@@ -1090,31 +1215,21 @@ function App() {
                         </Marker>
                       ))}
                     </MapContainer>
-                    <div className="map-key">
-                      <span>
-                        <i style={{ background: COLORS.red }} /> Red
-                      </span>
-                      <span>
-                        <i style={{ background: COLORS.orange }} /> Orange
-                      </span>
-                      <span>
-                        <i style={{ background: COLORS.yellow }} /> Yellow
-                      </span>
-                      <span>
-                        <i style={{ background: COLORS.green }} /> Green
-                      </span>
-                      <span>
-                        <i
-                          style={{
-                            background: COLORS.white,
-                            border: "1px solid #94a3b8",
-                          }}
-                        />{" "}
-                        White
-                      </span>
+                    <div className="map-key zone-key">
+                      {Object.entries(ZONE_LABELS).map(([status, label]) => (
+                        <span key={status}>
+                          <i
+                            style={{
+                              background:
+                                ZONE_COLORS[status as keyof typeof ZONE_COLORS],
+                            }}
+                          />
+                          {label}
+                        </span>
+                      ))}
                     </div>
                     <div className="map-instruction">
-                      <MapPin size={14} /> Select a marker for report details
+                      <MapPin size={14} /> Tap a zone or marker for details
                     </div>
                   </div>
                   <div className="map-footnote">
@@ -1724,8 +1839,8 @@ function App() {
                     <div>
                       <h3>Incident queue</h3>
                       <p>
-                        Confirm accurate reports to award 50 points once. You
-                        cannot review your own reports.
+                        Confirm accurate reports to award 50 points once. Your
+                        own reports can be reviewed without earning points.
                       </p>
                     </div>
                     <div className="view-switch">
@@ -1842,16 +1957,13 @@ function App() {
                               </label>
                               {r.reporterId === user.uid && (
                                 <p className="self-review-note">
-                                  You submitted this report. An independent
-                                  administrator must review it.
+                                  This is your own report. You can review it,
+                                  but no reward points will be awarded.
                                 </p>
                               )}
                               <fieldset
                                 className="review-actions"
-                                disabled={
-                                  Boolean(reviewBusy) ||
-                                  r.reporterId === user.uid
-                                }
+                                disabled={Boolean(reviewBusy)}
                               >
                                 <button
                                   className="btn btn-success"

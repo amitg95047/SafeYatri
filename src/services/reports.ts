@@ -71,9 +71,10 @@ export async function reviewReport(
     const snapshot = await tx.get(ref);
     if (!snapshot.exists()) throw new Error("Report not found.");
     const report = snapshot.data();
-    if (report.reporterId === user.uid)
-      throw new Error("You cannot review your own report.");
-    const award = action === "verified" && !report.rewardAwarded;
+    const award =
+      action === "verified" &&
+      !report.rewardAwarded &&
+      report.reporterId !== user.uid;
     const profile = doc(db!, "users", report.reporterId);
     const account = award ? await tx.get(profile) : null;
     const status: RoadStatus =
