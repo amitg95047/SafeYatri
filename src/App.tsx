@@ -41,6 +41,9 @@ import {
   Upload,
   UserRound,
   Users,
+  Wifi,
+  WifiOff,
+  RefreshCw,
   X,
 } from "lucide-react";
 import type {
@@ -65,6 +68,9 @@ import { firebaseReady } from "./services/firebase";
 import { CameraCapture } from "./components/CameraCapture";
 import { JourneyLayers, type JourneyInfo } from "./components/JourneyLayers";
 import { JourneySummary } from "./components/JourneySummary";
+import { BlockageFeed } from "./components/BlockageFeed";
+import { TravelKit } from "./components/TravelKit";
+import type { SyncMetadata } from "./services/offline";
 import { ZoneEditor } from "./components/ZoneEditor";
 import { zoneTouchesRoute } from "./services/journey";
 import { mergeZones, ZONE_COLORS, ZONE_LABELS } from "./data/zones";
@@ -156,6 +162,10 @@ function App() {
   const [from, setFrom] = useState("Siliguri");
   const [to, setTo] = useState("Gangtok");
   const [routeMessage, setRouteMessage] = useState("");
+  const [online, setOnline] = useState(navigator.onLine);
+  const [selectedRouteId, setSelectedRouteId] = useState<string>();
+  const [reportsSync, setReportsSync] = useState<SyncMetadata>({ syncedAt: null, source: "cache", cacheAvailable: false });
+  const [zonesSync, setZonesSync] = useState<SyncMetadata>({ syncedAt: null, source: "cache", cacheAvailable: false });
   const [journey, setJourney] = useState({
     from: "Siliguri",
     to: "Gangtok",
@@ -180,12 +190,20 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
+    const updateConnection = () => setOnline(navigator.onLine);
+    window.addEventListener("online", updateConnection);
+    window.addEventListener("offline", updateConnection);
+    return () => { window.removeEventListener("online", updateConnection); window.removeEventListener("offline", updateConnection); };
+  }, []);
+  useEffect(() => {
+    setSavedZones([]);
+    setZonesSync({ syncedAt: null, source: "cache", cacheAvailable: false });
     if (!user) {
-      setSavedZones([]);
       return;
     }
     return watchZones(setSavedZones, (e) =>
       setToast(`Could not load admin zones: ${e.message}`),
+      setZonesSync,
     );
   }, [user?.uid]);
   useEffect(() => {
@@ -272,32 +290,45 @@ function App() {
   }, []);
   useEffect(() => watchUser(setUser), []);
   useEffect(() => {
+    setJourneyInfo({ loading: false, error: "", distance: 0, duration: 0, zones: [] });
+    setFrom("Siliguri"); setTo("Gangtok"); setJourney({ from: "Siliguri", to: "Gangtok", revision: 0 });
+    setSelected(null);
     if (user) {
       setScreen(user.role === "reviewer" ? "review" : "dashboard");
       setReviewNotes({});
       setChatOpen(false);
+      setSelectedRouteId(undefined);
+      try {
+        const saved = JSON.parse(localStorage.getItem(`safeyatri.lastJourney.${user.uid}`) || "null");
+        if (saved && PLACES.some((p) => p.name === saved.from) && PLACES.some((p) => p.name === saved.to) && saved.from !== saved.to) {
+          setFrom(saved.from); setTo(saved.to); setJourney({ from: saved.from, to: saved.to, revision: 0 });
+        }
+      } catch { /* Start with the default journey if storage is unavailable. */ }
     }
   }, [user?.uid]);
   useEffect(() => {
+    setIncidents([]);
+    setReportsSync({ syncedAt: null, source: "cache", cacheAvailable: false });
     if (!user) {
-      setIncidents([]);
       return;
     }
     return watchReports(setIncidents, (e) =>
       setToast(`Could not load reports: ${e.message}`),
+      setReportsSync,
     );
   }, [user?.uid]);
+  const checkedZones = useMemo(() => Array.from(new Map([
+    ...journeyInfo.zones,
+    ...(journeyInfo.alternatives || []).flatMap((r) => r.zones),
+  ].map((z) => [z.id, z])).values()), [journeyInfo.zones, journeyInfo.alternatives]);
+  const relatedReports = useMemo(() => incidents.filter((i) => {
+    const paths = journeyInfo.alternatives?.map((r) => r.points) || (journeyInfo.points?.length ? [journeyInfo.points] : []);
+    return paths.length ? paths.some((points) => zoneTouchesRoute({ ...i, radiusMeters: 2500 }, points, 0)) || checkedZones.some((z) => !z.isDemo && z.status === "closed" && zoneTouchesRoute(z, [[i.lat, i.lng]], 500)) : i.corridor === corridor;
+  }), [incidents, journeyInfo.alternatives, journeyInfo.points, checkedZones, corridor]);
   const visible = useMemo(
     () =>
-      incidents.filter(
+      relatedReports.filter(
         (i) =>
-          i.corridor === corridor &&
-          (!journeyInfo.points?.length ||
-            zoneTouchesRoute(
-              { ...i, radiusMeters: 2500 },
-              journeyInfo.points,
-              0,
-            )) &&
           (!recentOnly || Date.now() - Date.parse(i.observedAt) < 86400000) &&
           (filter === "all" || i.status === filter) &&
           `${i.title} ${i.location} ${i.description}`
@@ -305,7 +336,7 @@ function App() {
             .includes(search.toLowerCase()),
       ),
     [
-      incidents,
+      relatedReports,
       corridor,
       filter,
       search,
@@ -323,19 +354,15 @@ function App() {
   );
   const counts = (Object.keys(COLORS) as RoadStatus[]).map((status) => ({
     status,
-    count: incidents.filter(
+    count: relatedReports.filter(
       (i) =>
-        i.corridor === corridor &&
-        (!journeyInfo.points?.length ||
-          zoneTouchesRoute(
-            { ...i, radiusMeters: 2500 },
-            journeyInfo.points,
-            0,
-          )) &&
         i.status === status &&
         (!recentOnly || Date.now() - Date.parse(i.observedAt) < 86400000),
     ).length,
   }));
+  const closureCount = checkedZones.filter((z) => !z.isDemo && z.status === "closed").length;
+  const chatReportIds = journeyInfo.points?.length ? incidents.filter((r) => zoneTouchesRoute({ ...r, radiusMeters: 2500 }, journeyInfo.points!, 0)).map((r) => r.id) : undefined;
+  const refreshJourney = () => { setSelectedRouteId(undefined); setJourney((j) => ({ ...j, revision: j.revision + 1 })); };
   const signIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -716,15 +743,12 @@ function App() {
           </a>
           <button
             className="icon-btn notification-btn"
-            title="Advisories"
-            onClick={() =>
-              setToast(
-                "Weather advisories are separate from road incident reports.",
-              )
-            }
+            title={`${closureCount} known closures on checked routes`}
+            aria-label={`View route advisories: ${closureCount} known closures`}
+            onClick={() => { setScreen("explore"); setToast(closureCount ? `${closureCount} known closure(s) on checked road options. See blockage cards and compare routes.` : "No mapped closures found for the checked routes. Check official advisories before departure."); }}
           >
             <Bell size={18} />
-            <i />
+            {closureCount > 0 && <i />}
           </button>
           <button
             className="user-chip account-trigger"
@@ -869,7 +893,7 @@ function App() {
               How status works <ArrowRight size={14} />
             </button>
             <div className="sidebar-footer">
-              <span className="online-dot" /> Firebase connected{" "}
+              <span className="online-dot" style={{ background: !online ? "#c59342" : reportsSync.source === "live" ? "#33a479" : "#a0ada6" }}/> {!online ? "Offline · saved data" : reportsSync.source === "live" ? "Community data synced" : "Waiting for sync"}{" "}
               <span>v0.1</span>
             </div>
           </div>
@@ -882,6 +906,14 @@ function App() {
           />
         )}
         <main className="main-content">
+          <section className={`connection-banner ${!online || reportsSync.source === "cache" || zonesSync.source === "cache" ? "connection-cached" : ""}`} aria-label="Connection and data freshness" role="status">
+            {online ? <Wifi size={17}/> : <WifiOff size={18}/>}
+            <div><strong>{!online ? "You’re offline · last-synced information" : reportsSync.source === "cache" || zonesSync.source === "cache" ? "Showing saved information while reconnecting" : "Connected · community observations synced"}</strong>
+              <span>Reports: {reportsSync.syncedAt ? new Date(reportsSync.syncedAt).toLocaleString("en-IN") : "no saved snapshot"} · Zones: {zonesSync.syncedAt ? new Date(zonesSync.syncedAt).toLocaleString("en-IN") : "no saved snapshot"}{!online ? ". Saved photos and route details remain available; map tiles may be unavailable." : ""}</span>
+              {online && reportsSync.source === "live" && !reportsSync.cacheAvailable && <span>Device storage is unavailable or full; report details cannot be saved for offline use.</span>}
+            </div>
+            <button className="btn btn-outline btn-small" disabled={!online || journeyInfo.loading} onClick={() => { setScreen("explore"); refreshJourney(); }}><RefreshCw size={14}/>Refresh route</button>
+          </section>
           {screen === "account" && <AccountPage user={user} />}
           {screen === "dashboard" && (
             <TravellerDashboard
@@ -914,13 +946,13 @@ function App() {
           )}
           {screen === "explore" && (
             <>
-              <div className="page-heading explore-heading">
+              <div className="page-heading explore-heading mountain-heading">
                 <div>
-                  <span className="eyebrow">PLAN WITH BETTER INFORMATION</span>
-                  <h1>Explore the roads</h1>
+                  <span className="eyebrow">A LITTLE CLARITY. A BETTER JOURNEY.</span>
+                  <h1>The hills are calling.</h1>
                   <p>
-                    Road observations across Northeast India. Always check
-                    official advisories before departure.
+                    Find your way through the Northeast with route options,
+                    community updates and a little more peace of mind.
                   </p>
                 </div>
                 <button
@@ -1002,6 +1034,9 @@ function App() {
                     }
                     setFrom(a.name);
                     setTo(b.name);
+                    setSelectedRouteId(undefined);
+                    setJourneyInfo({ loading: true, error: "", distance: 0, duration: 0, zones: [] });
+                    try { localStorage.setItem(`safeyatri.lastJourney.${user.uid}`, JSON.stringify({ from: a.name, to: b.name })); } catch { /* Journey remains usable in memory. */ }
                     setJourney((previous) => ({
                       from: a.name,
                       to: b.name,
@@ -1010,7 +1045,7 @@ function App() {
                     setView("map");
                     setSelected(null);
                     setRouteMessage(
-                      `${a.name}, ${a.state} → ${b.name}, ${b.state}. The map shows the selected road route with admin advisories and labelled demo zones.`,
+                      `${a.name}, ${a.state} → ${b.name}, ${b.state}. Comparing road options against mapped blockages.`,
                     );
                   }}
                 >
@@ -1024,10 +1059,10 @@ function App() {
                     rel="noopener noreferrer"
                     href={`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(journey.from)}&destination=${encodeURIComponent(journey.to)}&travelmode=driving`}
                   >
-                    Open selected journey directions ↗
+                    Compare directions in Google Maps ↗
                   </a>
                   <Navigation size={16} />
-                  {routeMessage}
+                  {routeMessage} External directions may use different roads; check the marked closures.
                   <button
                     onClick={() => setRouteMessage("")}
                     aria-label="Dismiss"
@@ -1056,8 +1091,11 @@ function App() {
                 from={journey.from}
                 to={journey.to}
                 info={journeyInfo}
+                offline={!online}
+                onSelectRoute={setSelectedRouteId}
                 onMessage={setToast}
               />
+              <BlockageFeed zones={checkedZones} reports={incidents} offline={!online || reportsSync.source === "cache" || zonesSync.source === "cache"} onReport={(report) => { setSelected(report.id); setRecentOnly(false); setFilter("all"); setSearch(""); window.setTimeout(() => document.querySelector(".selected-detail")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" }), 100); }}/>
               <div className="summary-strip">
                 {counts.map((c) => (
                   <button
@@ -1192,6 +1230,8 @@ function App() {
                         to={journey.to}
                         requestKey={journey.revision}
                         zones={zones}
+                        incidents={incidents}
+                        selectedRouteId={selectedRouteId}
                         onInfo={setJourneyInfo}
                       />
                       {visible.map((i) => (
@@ -1211,11 +1251,16 @@ function App() {
                                 ? "Fictional demo incident"
                                 : i.location}
                             </small>
+                            {i.photo && <img className="popup-evidence" src={i.photo} alt={`Submitted road evidence at ${i.location}`}/>}
+                            <p>{i.description}</p>
+                            <small>{REVIEW_LABEL[i.review]} · {new Date(i.observedAt).toLocaleString("en-IN")}</small>
                           </Popup>
                         </Marker>
                       ))}
                     </MapContainer>
                     <div className="map-key zone-key">
+                      <span><i style={{ background: "#dc4b50" }}/>Blocked road section</span>
+                      <span><i style={{ background: "#0f8a7c" }}/>Selected route</span>
                       {Object.entries(ZONE_LABELS).map(([status, label]) => (
                         <span key={status}>
                           <i
@@ -1243,7 +1288,7 @@ function App() {
                 <aside className="details-panel">
                   <div className="details-heading">
                     <div>
-                      <span className="eyebrow">CORRIDOR UPDATES</span>
+                      <span className="eyebrow">CHECKED ROUTE UPDATES</span>
                       <h3>
                         Road observations <span>{visible.length}</span>
                       </h3>
@@ -1386,6 +1431,7 @@ function App() {
                   )}
                 </aside>
               </div>
+              <TravelKit uid={user.uid} from={journey.from} to={journey.to}/>
               <section className="advisory-card">
                 <div className="advisory-icon">
                   <CloudRain size={20} />
@@ -2013,6 +2059,7 @@ function App() {
       <HelpPanel
         user={user}
         reports={incidents}
+        context={{ from: journey.from, to: journey.to, distance: journeyInfo.distance, duration: journeyInfo.duration, zones: journeyInfo.zones, alternatives: journeyInfo.alternatives, syncedAt: journeyInfo.syncedAt, offline: !online, source: journeyInfo.source, reportsSyncedAt: reportsSync.syncedAt || undefined, zonesSyncedAt: zonesSync.syncedAt || undefined, reportsSource: reportsSync.source, zonesSource: zonesSync.source, loading: journeyInfo.loading, reportIds: chatReportIds }}
         open={chatOpen}
         onOpen={setChatOpen}
         onNavigate={(next) => {

@@ -10,24 +10,29 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "./firebase";
 import type { Incident, ReviewStatus, RoadStatus } from "../types";
+import { createSnapshotReceiver, type SyncMetadata } from "./offline";
 export function watchReports(
   next: (items: Incident[]) => void,
   error: (e: Error) => void,
+  onSync?: (metadata: SyncMetadata) => void,
 ) {
-  if (!db) return () => {};
+  const uid = auth?.currentUser?.uid;
+  if (!db || !uid) return () => {};
+  const receive = createSnapshotReceiver(uid, "reports", next, onSync);
   return onSnapshot(
     query(collection(db, "reports"), orderBy("observedAt", "desc")),
-    (s) =>
-      next(
-        s.docs.map(
-          (d) =>
-            ({
-              ...d.data(),
-              id: d.id,
-              observedAt: d.data().observedAt.toDate().toISOString(),
-            }) as Incident,
-        ),
-      ),
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      const items = snapshot.docs.map((document) => {
+        const data = document.data();
+        return {
+          ...data,
+          id: document.id,
+          observedAt: data.observedAt.toDate().toISOString(),
+        } as Incident;
+      });
+      receive(items, snapshot.metadata);
+    },
     error,
   );
 }

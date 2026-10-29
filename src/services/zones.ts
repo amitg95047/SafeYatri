@@ -8,25 +8,30 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import type { RoadZone } from "../types";
+import { createSnapshotReceiver, type SyncMetadata } from "./offline";
 export function watchZones(
   next: (zones: RoadZone[]) => void,
   error: (error: Error) => void,
+  onSync?: (metadata: SyncMetadata) => void,
 ) {
-  if (!db) return () => {};
+  const uid = auth?.currentUser?.uid;
+  if (!db || !uid) return () => {};
+  const receive = createSnapshotReceiver(uid, "zones", next, onSync);
   return onSnapshot(
     collection(db, "zones"),
-    (snapshot) =>
-      next(
-        snapshot.docs.map(
-          (d) =>
-            ({
-              ...d.data(),
-              id: d.id,
-              expiresAt: d.data().expiresAt.toDate().toISOString(),
-              updatedAt: d.data().updatedAt?.toDate?.().toISOString() || "",
-            }) as RoadZone,
-        ),
-      ),
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      const items = snapshot.docs.map((document) => {
+        const data = document.data();
+        return {
+          ...data,
+          id: document.id,
+          expiresAt: data.expiresAt.toDate().toISOString(),
+          updatedAt: data.updatedAt?.toDate?.().toISOString() || "",
+        } as RoadZone;
+      });
+      receive(items, snapshot.metadata);
+    },
     error,
   );
 }

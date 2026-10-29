@@ -11,12 +11,17 @@ import L from "leaflet";
 import { PLACES } from "../data/places";
 import { ZONE_COLORS, ZONE_LABELS } from "../data/zones";
 import {
-  fetchJourneyRoute,
+  fetchJourneyRoutes,
+  readCachedJourney,
+  rankJourneyRoutes,
+  reportClosureZones,
+  blockedRouteSegments,
   zoneTouchesRoute,
-  type JourneyRoute,
+  type JourneyRoutes,
+  type RouteOption,
   type Point,
 } from "../services/journey";
-import type { RoadZone } from "../types";
+import type { Incident, RoadZone } from "../types";
 export interface JourneyInfo {
   loading: boolean;
   error: string;
@@ -24,8 +29,24 @@ export interface JourneyInfo {
   duration: number;
   zones: RoadZone[];
   points?: Point[];
+  alternatives?: RouteOption[];
+  selectedRouteId?: string;
+  syncedAt?: string;
+  source?: "live" | "cache";
+  warning?: string;
+  baselineBlocked?: boolean;
 }
-function ZonePopup({ zone: z }: { zone: RoadZone }) {
+function ClosureEvidence({ zone, incidents }: { zone: RoadZone; incidents?: Incident[] }) {
+  if (zone.isDemo || zone.status !== "closed") return null;
+  const reports = (incidents ?? []).filter((r) => !r.fictional && r.review !== "rejected" &&
+    (zone.id === `report-${r.id}` || zoneTouchesRoute(zone, [[r.lat, r.lng]], 500))).slice(0, 2);
+  return <>{reports.map((r) => <div key={r.id}>
+    <p><strong>{r.type}</strong> · {r.review === "verified" ? "Verified" : "Unverified"}<br/><small>Observed {new Date(r.observedAt).toLocaleString("en-IN")}</small></p>
+    {r.photo && <img className="popup-evidence" loading="lazy" src={r.photo} alt={`Submitted road evidence at ${r.location}`}/>}
+    <p>{r.description.slice(0, 180)}{r.description.length > 180 ? "…" : ""}</p>
+  </div>)}</>;
+}
+function ZonePopup({ zone: z, incidents }: { zone: RoadZone; incidents?: Incident[] }) {
   return (
     <>
       <strong>{z.name}</strong>
@@ -40,15 +61,18 @@ function ZonePopup({ zone: z }: { zone: RoadZone }) {
           {new Date(z.expiresAt).toLocaleString("en-IN")}
         </small>
       )}
+      <ClosureEvidence zone={z} incidents={incidents}/>
     </>
   );
 }
 export function ZoneLayers({
   zones,
   onSelect,
+  incidents,
 }: {
   zones: RoadZone[];
   onSelect?: (zone: RoadZone) => void;
+  incidents?: Incident[];
 }) {
   return (
     <>
@@ -75,7 +99,7 @@ export function ZoneLayers({
               eventHandlers={events}
             >
               <Popup>
-                <ZonePopup zone={z} />
+                <ZonePopup zone={z} incidents={incidents}/>
               </Popup>
             </Circle>
             <CircleMarker
@@ -90,7 +114,7 @@ export function ZoneLayers({
               eventHandlers={events}
             >
               <Popup>
-                <ZonePopup zone={z} />
+                <ZonePopup zone={z} incidents={incidents}/>
               </Popup>
             </CircleMarker>
           </Fragment>
@@ -105,32 +129,54 @@ export function JourneyLayers({
   zones,
   onInfo,
   requestKey,
+  selectedRouteId,
+  incidents,
 }: {
   from: string;
   to: string;
   requestKey: number;
   zones: RoadZone[];
   onInfo: (info: JourneyInfo) => void;
+  selectedRouteId?: string;
+  incidents?: Incident[];
 }) {
   const map = useMap();
-  const [route, setRoute] = useState<JourneyRoute | null>(null);
+  const journeyKey = `${from}:${to}`;
+  const [storedResult, setStoredResult] = useState<{ key: string; data: JourneyRoutes } | null>(null);
+  const [fetchKey, setFetchKey] = useState(journeyKey);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [networkRevision, setNetworkRevision] = useState(0);
+  const [hazardTime, setHazardTime] = useState(Date.now());
+  const result = storedResult?.key === journeyKey ? storedResult.data : null;
+  const displayLoading = loading || fetchKey !== journeyKey;
+  const displayError = fetchKey === journeyKey ? error : "";
   const start = PLACES.find((p) => p.name === from),
     end = PLACES.find((p) => p.name === to);
   useEffect(() => {
-    setRoute(null);
+    const changed = () => setNetworkRevision((previous) => previous + 1);
+    const timer = window.setInterval(() => setHazardTime(Date.now()), 60000);
+    window.addEventListener("online", changed);
+    window.addEventListener("offline", changed);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", changed);
+      window.removeEventListener("offline", changed);
+    };
+  }, []);
+  const activeZones = useMemo(() => zones.filter((z) => z.active && Date.parse(z.expiresAt) > Date.now()), [zones, hazardTime]);
+  const hazards = useMemo(() => [...activeZones, ...reportClosureZones(incidents ?? [], Date.now())], [activeZones, incidents, hazardTime]);
+  const closureKey = hazards.filter((z) => !z.isDemo && z.status === "closed").map((z) => `${z.id}:${z.updatedAt}:${z.lat}:${z.lng}:${z.radiusMeters}`).sort().join("|");
+  useEffect(() => {
+    setFetchKey(journeyKey);
+    setStoredResult(null);
     setError("");
     if (!start || !end || start.name === end.name) {
       setLoading(false);
       return;
     }
     const controller = new AbortController();
-    let timedOut = false;
-    const timer = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 12000);
+    let disposed = false;
     setLoading(true);
     map.fitBounds(
       [
@@ -139,51 +185,55 @@ export function JourneyLayers({
       ],
       { padding: [35, 35], maxZoom: 12 },
     );
-    void fetchJourneyRoute(
+    const cached = readCachedJourney([start.lat, start.lng], [end.lat, end.lng]);
+    if (cached) setStoredResult({ key: journeyKey, data: cached });
+    void fetchJourneyRoutes(
       [start.lat, start.lng],
       [end.lat, end.lng],
       controller.signal,
+      hazards,
     )
       .then((result) => {
-        if (!controller.signal.aborted) {
-          setRoute(result);
-          map.fitBounds(L.latLngBounds(result.points), {
-            padding: [35, 35],
-            maxZoom: 12,
-          });
-        }
+        if (!disposed) setStoredResult({ key: journeyKey, data: result });
       })
       .catch((e) => {
-        if (!controller.signal.aborted || timedOut)
+        if (!disposed)
           setError(
-            timedOut
-              ? "Road routing timed out. Only the selected places are shown."
-              : `${e instanceof Error ? e.message : "Road routing failed."} Only the selected places are shown.`,
+            `${e instanceof Error ? e.message : "Road routing failed."} Only the selected places are shown.`,
           );
       })
       .finally(() => {
-        clearTimeout(timer);
-        if (!controller.signal.aborted || timedOut) setLoading(false);
+        if (!disposed) setLoading(false);
       });
     return () => {
-      clearTimeout(timer);
+      disposed = true;
       controller.abort();
     };
-  }, [from, to, map, requestKey]);
-  const nearby = useMemo(
-    () => (route ? zones.filter((z) => zoneTouchesRoute(z, route.points)) : []),
-    [route, zones],
+  }, [from, to, map, requestKey, closureKey, networkRevision]);
+  const options = useMemo(
+    () => rankJourneyRoutes(result?.routes ?? [], hazards),
+    [result, hazards],
   );
+  const route = options.find((r) => r.id === selectedRouteId) ?? options[0];
+  useEffect(() => {
+    if (route) map.fitBounds(L.latLngBounds(route.points), { padding: [35, 35], maxZoom: 12 });
+  }, [route?.id, result, map]);
   useEffect(() => {
     onInfo({
-      loading,
-      error,
+      loading: displayLoading,
+      error: displayError,
       distance: route?.distance || 0,
       duration: route?.duration || 0,
-      zones: nearby,
+      zones: route?.zones ?? [],
       points: route?.points || [],
+      alternatives: options,
+      selectedRouteId: route?.id,
+      syncedAt: result?.syncedAt,
+      source: result?.source,
+      warning: result?.warning,
+      baselineBlocked: options.find((r) => r.id === "route-0")?.blocked ?? false,
     });
-  }, [loading, error, route, nearby, onInfo]);
+  }, [displayLoading, displayError, route, options, result, onInfo]);
   const icon = (label: string) =>
     L.divIcon({
       className: "journey-endpoint",
@@ -193,13 +243,28 @@ export function JourneyLayers({
     });
   return (
     <>
-      <ZoneLayers zones={zones} />
+      <ZoneLayers zones={activeZones} incidents={incidents}/>
+      {options.filter((option) => option.id !== route?.id).map((option) => (
+        <Polyline key={option.id} positions={option.points} pathOptions={{ color: "#879eaf", weight: 4, opacity: 0.55, dashArray: "8 7" }}>
+          <Popup>{option.label} · {(option.distance / 1000).toFixed(0)} km{option.blocked ? " · Blocked section" : " · No mapped closure found"}</Popup>
+        </Polyline>
+      ))}
       {route && (
         <Polyline
           positions={route.points}
-          pathOptions={{ color: "#183e38", weight: 5, opacity: 0.9 }}
+          pathOptions={{ color: route.blocked ? "#647a8c" : "#238d9b", weight: 6, opacity: 0.95 }}
         />
       )}
+      {options.flatMap((option) => option.blockedSegments.map((segment, i) => (
+        <Polyline key={`${option.id}:${segment.zone.id}:${i}`} positions={segment.points} pathOptions={{ color: "#dc3e4f", weight: option.id === route?.id ? 8 : 6, opacity: 0.95 }}>
+          <Popup><strong>Blocked road section · {segment.zone.name}</strong><p>{segment.zone.note}</p><small>{segment.zone.id.startsWith("report-") ? "Verified community report · approximate location" : "Admin advisory"} · {new Date(segment.zone.updatedAt).toLocaleString("en-IN")}</small><ClosureEvidence zone={segment.zone} incidents={incidents}/></Popup>
+        </Polyline>
+      )))}
+      {route && blockedRouteSegments(route.points, route.zones.filter((z) => z.isDemo)).map((segment, i) => (
+        <Polyline key={`demo:${segment.zone.id}:${i}`} positions={segment.points} pathOptions={{ color: "#c64848", weight: 7, dashArray: "6 7" }}>
+          <Popup><strong>Demo blocked road example</strong><p>{segment.zone.name} · not a live closure</p></Popup>
+        </Polyline>
+      ))}
       {start && (
         <Marker position={[start.lat, start.lng]} icon={icon("A")}>
           <Popup>Start: {start.name}</Popup>

@@ -126,8 +126,8 @@ export function Membership({
           <p>Proposed extra features · checkout unavailable</p>
           <ul>
             <li>Multiple saved journeys</li>
-            <li>Personal route alerts</li>
-            <li>Downloadable travel summaries</li>
+            <li>Background route alerts</li>
+            <li>Scheduled travel digests</li>
           </ul>
           <button className="btn btn-outline" disabled>
             Coming later · no payments enabled
@@ -138,6 +138,12 @@ export function Membership({
           </p>
         </article>
       </div>
+      <section className="form-card travel-extras-card">
+        <span className="eyebrow">MORE TOOLS FOR EVERY TRAVELLER</span>
+        <h2>Your free journey toolkit</h2>
+        <p>Compare routes against mapped blockages, download a journey brief, use your saved departure checklist, and ask Yatri Help about your route. Last-synced route details and a limited set of recent report photos are kept on this device after an online visit.</p>
+        <p className="form-footnote">Open Explore roads to use these tools. Keep your browser data to retain offline information. Cached observations are not live updates.</p>
+      </section>
       {message && (
         <div className="route-message" role="status">
           {message}
