@@ -1,36 +1,38 @@
 {
-  "name": "safe-yatra",
+  "name": "safe-yatri",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-<<<<<<< HEAD
     "preview": "vite preview --host 0.0.0.0",
     "test": "npm run test:help && npm run test:rules",
     "test:rules": "firebase emulators:exec --project demo-safeyatra --config firebase.emulators.json --only firestore 'node tests/firestore.rules.mjs'",
     "test:help": "node --test tests/help.test.mjs tests/journey.test.mjs tests/offline.test.mjs"
-=======
-    "preview": "vite preview --host 0.0.0.0"
->>>>>>> 3361aa4154425a8c6e1712ef2bf88f55419d7048
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "firebase": "^13.1.0",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.468.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "vite": "^6.1.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "^5.7.3",
     "react-leaflet": "^4.2.1",
-    "leaflet": "^1.9.4",
-    "lucide-react": "^0.468.0"
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
   },
   "devDependencies": {
-    "tailwindcss": "^3.4.17",
-    "postcss": "^8.5.1",
-    "autoprefixer": "^10.4.20",
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "@types/leaflet": "^1.9.16",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@types/leaflet": "^1.9.16"
+    "autoprefixer": "^10.4.20",
+    "firebase-tools": "^15.34.1",
+    "postcss": "^8.5.1",
+    "tailwindcss": "^3.4.17"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.13.6"
   }
 }

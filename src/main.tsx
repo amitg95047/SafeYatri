@@ -1,10 +1,9 @@
-import React from 'react';
-import { createRoot } from 'react-dom/client';
-import 'leaflet/dist/leaflet.css';
-import './styles.css';
-import App from './App';
+import React from "react";
+import { createRoot } from "react-dom/client";
+import "leaflet/dist/leaflet.css";
+import "./styles.css";
+import App from "./App";
 
-<<<<<<< HEAD
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
@@ -20,6 +19,3 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
     });
   });
 }
-=======
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
->>>>>>> 3361aa4154425a8c6e1712ef2bf88f55419d7048
